@@ -1,0 +1,68 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: notifications_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d notifications_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  notifications-svc-s09:
+    build: ./notifications-svc
+    container_name: notifications-svc-s09
+    ports:
+      - "8131:8131"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://user:password@postgres:5432/notifications_db
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq/
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  notification-processor:
+    build: ./notification-processor
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq/
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api-gateway:
+    build: ./api-gateway
+    ports:
+      - "80:80"
+    environment:
+      NOTIFICATIONS_SVC_URL: http://notifications-svc-s09:8131
+    depends_on:
+      - notifications-svc-s09
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
